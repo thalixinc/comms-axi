@@ -90,3 +90,15 @@ latest binary's recommended copy:
 Both are idempotent: re-runs replace the block delimited by the ai-memory
 start/end HTML-comment markers, without disturbing the rest of the file.
 <!-- ai-memory:end -->
+
+## Verifying your work
+
+Run these before any "done"; the full suite green is the definition of done for every ticket (crew rule 5).
+
+```sh
+# TODO: the build command
+# TODO: the test command (the full suite)
+# TODO: the lint command
+```
+
+Evidence (the command output) goes to `intent/<epic>-<slug>/tickets/<n>-<slug>/evidence/`.
