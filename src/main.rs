@@ -11,6 +11,7 @@ use comms_axi::read::read as read_queue;
 use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
 use comms_axi::send::{send_to, Enqueued};
+use comms_axi::wake::{idle_tick, WakeAction};
 use serde_json::{json, Value};
 
 const USAGE: &str = "\
@@ -23,12 +24,14 @@ USAGE:
     comms-axi send <role> <event> [--state-dir <path>] [--json]
     comms-axi read <role> [--all] [--state-dir <path>] [--json]
     comms-axi drain <role> [--state-dir <path>] [--json]
+    comms-axi wake <role> [--state-dir <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
     --surface <hint> R4 surface hint (cos_surface); a stale hint errors loudly
     --record <path>  load the fleet/run record JSON from <path> (else empty record)
     --json           print the result (StationBinding / Dispatch / Report / Enqueued / ReadResult) as JSON
+    --json           print the result (StationBinding / Dispatch / Report / Enqueued / WakeAction) as JSON
     -h, --help       this help
 
 report resolves the SEAT's own binding (role from $CF_ROLE) and delegates to the adapter's
@@ -41,6 +44,8 @@ lives under --state-dir (default $COMMS_AXI_STATE_DIR or $HOME/.omp/state).
 read pulls a role's queue on demand (bounded by default, --all drains everything); drain is an
 alias for read --all. Both clear hasMail when the queue empties and render the drained events as
 one injectable turn.
+wake is the hasMail-gated idle tick: file-stat only — re-wake if the station has pending mail,
+else a silent no-op (zero tokens). Non-idle never wakes.
 ";
 
 fn main() -> ExitCode {
@@ -67,6 +72,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         "send" => cmd_send(&args[1..]),
         "read" => cmd_read(&args[1..]),
         "drain" => cmd_drain(&args[1..]),
+        "wake" => cmd_wake(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -313,6 +319,42 @@ fn read_impl(args: &[String], force_all: bool) -> Result<ExitCode, String> {
         for e in &result.events {
             println!("  - {}: {}", e.from, e.text);
         }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_wake(args: &[String]) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("wake requires <role>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+
+    let mut state_dir: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--state-dir" => {
+                i += 1;
+                state_dir = Some(args.get(i).cloned().ok_or("--state-dir needs a value")?);
+            }
+            "--json" => json_out = true,
+            other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
+        }
+        i += 1;
+    }
+
+    let dir = resolve_state_dir(state_dir.as_deref());
+    // The idle-tick wake: file-stat only. The role's own idle state is true on a heartbeat tick.
+    let action: WakeAction = idle_tick(&dir, role, true);
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&action).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!("wake -> {}: {}", role, action.as_str());
     }
     Ok(ExitCode::SUCCESS)
 }
