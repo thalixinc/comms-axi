@@ -39,7 +39,7 @@ use std::str::FromStr;
 
 use serde_json::Value;
 
-use crate::adapter::{AdapterKind, HostRef, Route, StationBinding, TransportKind};
+use crate::adapter::{AdapterKind, HostRef, Route, StationBinding, TransportKind, WakeKind};
 use crate::fleet::{self, EffectiveProfile, FleetDefault, Override};
 
 /// The host a role lives on when the fleet record names none.
@@ -110,6 +110,7 @@ pub fn resolve_role(role: &str, run: &str, record: &Value) -> Result<StationBind
         surface_ref,
         session_id,
         route,
+        wake: WakeKind::HeartbeatPoll,
     })
 }
 
@@ -498,5 +499,6 @@ mod tests {
         assert_eq!(v["adapter"], "herdr");
         assert_eq!(v["route"]["host"], "thalixs-mbp");
         assert_eq!(v["route"]["generation"], 4);
+        assert_eq!(v["wake"], "heartbeat-poll");
     }
 }
