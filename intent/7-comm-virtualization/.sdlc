@@ -1,6 +1,7 @@
 issue: 7
 slug: comm-virtualization
-stage: design
+stage: build
 history:
   - plan 2026-09-13T20:10:28-0400 init
   - design 2026-09-13T20:16:00-0400 478884628ecb98682b7a9577ec8a0476b4000df1
+  - build 2026-09-13T20:23:26-0400 b5d19f2939ca2d8f6ee76323733ac3f608db2c95
