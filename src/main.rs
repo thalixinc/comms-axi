@@ -389,8 +389,6 @@ fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
 mod tests {
     use super::resolve_state_dir;
 
-    // Env mutation is process-global; these tests are the only ones in the bin crate and run
-    // serial by default, but we still restore every var we touch so the suite stays hermetic.
     fn clear(keys: &[&str]) {
         for k in keys {
             std::env::remove_var(k);
@@ -401,9 +399,11 @@ mod tests {
         std::env::set_var(key, val);
     }
 
+    // Env mutation is process-global and would race under the parallel test runner, so all five
+    // precedence cases live in ONE test — they run sequentially and the vars are cleared after.
     #[test]
-    fn flag_wins_over_all_env() {
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    fn state_dir_precedence_with_cf_cof_home() {
+        // 1. --state-dir wins over every env var.
         set("CF_COF_HOME", "/cf/home");
         set("COMMS_AXI_STATE_DIR", "/env/state");
         set("HOME", "/home/user");
@@ -411,55 +411,34 @@ mod tests {
             resolve_state_dir(Some("/flag/dir")),
             std::path::PathBuf::from("/flag/dir")
         );
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-    }
 
-    #[test]
-    fn comms_axi_state_dir_beats_cf_cof_home() {
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-        set("CF_COF_HOME", "/cf/home");
-        set("COMMS_AXI_STATE_DIR", "/env/state");
+        // 2. $COMMS_AXI_STATE_DIR beats $CF_COF_HOME.
         assert_eq!(
             resolve_state_dir(None),
             std::path::PathBuf::from("/env/state")
         );
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-    }
 
-    #[test]
-    fn cf_cof_home_anchors_when_set() {
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-        set("CF_COF_HOME", "/cf/home");
-        set("HOME", "/home/user");
-        // CF_COF_HOME set → <CF_COF_HOME>/.omp/state (the cf reader #497 path).
+        // 3. $CF_COF_HOME set → <CF_COF_HOME>/.omp/state (the cf reader #497 path).
+        clear(&["COMMS_AXI_STATE_DIR"]);
         assert_eq!(
             resolve_state_dir(None),
             std::path::PathBuf::from("/cf/home/.omp/state")
         );
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-    }
 
-    #[test]
-    fn home_fallback_when_cf_cof_home_unset() {
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-        set("HOME", "/home/user");
-        assert_eq!(
-            resolve_state_dir(None),
-            std::path::PathBuf::from("/home/user/.omp/state")
-        );
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
-    }
-
-    #[test]
-    fn empty_cf_cof_home_does_not_anchor() {
-        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        // 4. $CF_COF_HOME empty → not a home; fall through to $HOME.
         set("CF_COF_HOME", "");
-        set("HOME", "/home/user");
-        // An empty CF_COF_HOME is not a home — fall through to $HOME.
         assert_eq!(
             resolve_state_dir(None),
             std::path::PathBuf::from("/home/user/.omp/state")
         );
+
+        // 5. $CF_COF_HOME unset → $HOME fallback.
+        clear(&["CF_COF_HOME"]);
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/home/user/.omp/state")
+        );
+
         clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
     }
 }
