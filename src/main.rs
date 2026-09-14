@@ -5,6 +5,7 @@
 use std::process::ExitCode;
 
 use comms_axi::event::{send_event, Event};
+use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
 use serde_json::{json, Value};
 
@@ -14,13 +15,17 @@ comms-axi — surface-agnostic agent messaging plane
 USAGE:
     comms-axi resolve <role> [--run <id>] [--surface <hint>] [--record <path>] [--json]
     comms-axi emit <role> <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
+    comms-axi report <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
     --surface <hint> R4 surface hint (cos_surface); a stale hint errors loudly
     --record <path>  load the fleet/run record JSON from <path> (else empty record)
-    --json           print the result (StationBinding / Dispatch) as JSON
+    --json           print the result (StationBinding / Dispatch / Report) as JSON
     -h, --help       this help
+
+report resolves the SEAT's own binding (role from $CF_ROLE) and delegates to the adapter's
+return channel — herdr-axi report on herdr, cmux-axi status on cmux.
 ";
 
 fn main() -> ExitCode {
@@ -43,6 +48,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     match args[0].as_str() {
         "resolve" => cmd_resolve(&args[1..]),
         "emit" => cmd_emit(&args[1..]),
+        "report" => cmd_report(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -160,6 +166,37 @@ fn cmd_emit(args: &[String]) -> Result<ExitCode, String> {
             dispatch.tool,
             dispatch.target,
             dispatch.text
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_report(args: &[String]) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("report requires <event>; try `comms-axi --help`".to_string());
+    }
+    let payload = &args[0];
+    let opts = parse_common(&args[1..])?;
+    let record = load_record(opts.record_path.as_deref(), opts.surface.as_deref())?;
+
+    // The seat's own role comes from the runtime context ($CF_ROLE), never a seat-typed token.
+    let role = std::env::var("CF_ROLE")
+        .map_err(|_| "report needs the seat's own role: set $CF_ROLE".to_string())?;
+
+    let rep = report(&role, &opts.run, &record, payload).map_err(|e| e.to_string())?;
+
+    if opts.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "report -> {}: adapter={} tool={} text={:?}",
+            role,
+            rep.adapter.as_str(),
+            rep.tool,
+            rep.text
         );
     }
     Ok(ExitCode::SUCCESS)
