@@ -1,3 +1,4 @@
 .claude/settings.local.json
 .omp/state/
 .omp/lavish/
+/target

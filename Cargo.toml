@@ -1,0 +1,23 @@
+[package]
+name = "comms-axi"
+version = "0.1.0"
+edition = "2021"
+description = "Surface-agnostic agent messaging plane: event-to-role comm over resolve_binding"
+license = "MIT"
+repository = "https://github.com/thalixinc/comms-axi"
+
+[lib]
+name = "comms_axi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "comms-axi"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
