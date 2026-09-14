@@ -39,7 +39,8 @@ return channel — herdr-axi report on herdr, cmux-axi status on cmux.
 
 send enqueues an event to a recipient role's LOCAL queue and sets its hasMail flag (deferred
 publish) — it never resolves-and-fires into a live session. The sender is $CF_ROLE; the queue
-lives under --state-dir (default $COMMS_AXI_STATE_DIR or $HOME/.omp/state).
+lives under --state-dir (default $COMMS_AXI_STATE_DIR, else $CF_COF_HOME/.omp/state, else
+$HOME/.omp/state).
 
 read pulls a role's queue on demand (bounded by default, --all drains everything); drain is an
 alias for read --all. Both clear hasMail when the queue empties and render the drained events as
@@ -359,7 +360,13 @@ fn cmd_wake(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The state dir: `--state-dir` wins, else `$COMMS_AXI_STATE_DIR`, else `$HOME/.omp/state`.
+/// The state dir: `--state-dir` wins, else `$COMMS_AXI_STATE_DIR`, else
+/// `$CF_COF_HOME/.omp/state`, else `$HOME/.omp/state`.
+///
+/// `$CF_COF_HOME` is cf's tracked CoS home — the single source of truth cf's heartbeat reader
+/// (#497) anchors on. When it is set, the comms-axi WRITER (`send`/`read`/`wake`) must land its
+/// `hasMail` marker on the same path the READER stats, or the pull loop is perma-dead on machines
+/// where `$HOME` != `$CF_COF_HOME`.
 fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
     if let Some(p) = flag {
         return PathBuf::from(p);
@@ -369,6 +376,69 @@ fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
             return PathBuf::from(p);
         }
     }
+    if let Ok(p) = std::env::var("CF_COF_HOME") {
+        if !p.trim().is_empty() {
+            return PathBuf::from(p).join(".omp").join("state");
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join(".omp").join("state")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_state_dir;
+
+    fn clear(keys: &[&str]) {
+        for k in keys {
+            std::env::remove_var(k);
+        }
+    }
+
+    fn set(key: &str, val: &str) {
+        std::env::set_var(key, val);
+    }
+
+    // Env mutation is process-global and would race under the parallel test runner, so all five
+    // precedence cases live in ONE test — they run sequentially and the vars are cleared after.
+    #[test]
+    fn state_dir_precedence_with_cf_cof_home() {
+        // 1. --state-dir wins over every env var.
+        set("CF_COF_HOME", "/cf/home");
+        set("COMMS_AXI_STATE_DIR", "/env/state");
+        set("HOME", "/home/user");
+        assert_eq!(
+            resolve_state_dir(Some("/flag/dir")),
+            std::path::PathBuf::from("/flag/dir")
+        );
+
+        // 2. $COMMS_AXI_STATE_DIR beats $CF_COF_HOME.
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/env/state")
+        );
+
+        // 3. $CF_COF_HOME set → <CF_COF_HOME>/.omp/state (the cf reader #497 path).
+        clear(&["COMMS_AXI_STATE_DIR"]);
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/cf/home/.omp/state")
+        );
+
+        // 4. $CF_COF_HOME empty → not a home; fall through to $HOME.
+        set("CF_COF_HOME", "");
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/home/user/.omp/state")
+        );
+
+        // 5. $CF_COF_HOME unset → $HOME fallback.
+        clear(&["CF_COF_HOME"]);
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/home/user/.omp/state")
+        );
+
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
 }
