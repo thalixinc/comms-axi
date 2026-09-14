@@ -1,11 +1,13 @@
 //! `comms-axi` — the comm virtualization CLI (lib + bin crate).
 //!
-//! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish) are implemented.
+//! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish) and
+//! `read`/`drain` (S2 pull) are implemented.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use comms_axi::event::{send_event, Event};
+use comms_axi::read::read as read_queue;
 use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
 use comms_axi::send::{send_to, Enqueued};
@@ -19,12 +21,14 @@ USAGE:
     comms-axi emit <role> <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
     comms-axi report <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
     comms-axi send <role> <event> [--state-dir <path>] [--json]
+    comms-axi read <role> [--all] [--state-dir <path>] [--json]
+    comms-axi drain <role> [--state-dir <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
     --surface <hint> R4 surface hint (cos_surface); a stale hint errors loudly
     --record <path>  load the fleet/run record JSON from <path> (else empty record)
-    --json           print the result (StationBinding / Dispatch / Report / Enqueued) as JSON
+    --json           print the result (StationBinding / Dispatch / Report / Enqueued / ReadResult) as JSON
     -h, --help       this help
 
 report resolves the SEAT's own binding (role from $CF_ROLE) and delegates to the adapter's
@@ -33,6 +37,10 @@ return channel — herdr-axi report on herdr, cmux-axi status on cmux.
 send enqueues an event to a recipient role's LOCAL queue and sets its hasMail flag (deferred
 publish) — it never resolves-and-fires into a live session. The sender is $CF_ROLE; the queue
 lives under --state-dir (default $COMMS_AXI_STATE_DIR or $HOME/.omp/state).
+
+read pulls a role's queue on demand (bounded by default, --all drains everything); drain is an
+alias for read --all. Both clear hasMail when the queue empties and render the drained events as
+one injectable turn.
 ";
 
 fn main() -> ExitCode {
@@ -57,6 +65,8 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         "emit" => cmd_emit(&args[1..]),
         "report" => cmd_report(&args[1..]),
         "send" => cmd_send(&args[1..]),
+        "read" => cmd_read(&args[1..]),
+        "drain" => cmd_drain(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -249,6 +259,60 @@ fn cmd_send(args: &[String]) -> Result<ExitCode, String> {
             "send -> {}: queued={} effect_id={} has_mail={} (deferred; recipient pulls on idle)",
             role, enq.queued, enq.effect_id, enq.has_mail
         );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_read(args: &[String]) -> Result<ExitCode, String> {
+    read_impl(args, false)
+}
+
+fn cmd_drain(args: &[String]) -> Result<ExitCode, String> {
+    read_impl(args, true)
+}
+
+fn read_impl(args: &[String], force_all: bool) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("read requires <role>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+
+    let mut all = force_all;
+    let mut state_dir: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--all" => all = true,
+            "--state-dir" => {
+                i += 1;
+                state_dir = Some(args.get(i).cloned().ok_or("--state-dir needs a value")?);
+            }
+            "--json" => json_out = true,
+            other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
+        }
+        i += 1;
+    }
+
+    let dir = resolve_state_dir(state_dir.as_deref());
+    let result = read_queue(&dir, role, all).map_err(|e| e.to_string())?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "read -> {}: {} event(s), {} remaining, has_mail={}",
+            role,
+            result.events.len(),
+            result.remaining,
+            result.has_mail
+        );
+        for e in &result.events {
+            println!("  - {}: {}", e.from, e.text);
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

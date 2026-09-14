@@ -104,6 +104,14 @@ impl Stream {
         &self.entries
     }
 
+    /// Remove and return the first `limit` envelopes (causal order). `limit >= len` returns them
+    /// all. Used by S2 read/drain to dequeue pending events; the remaining tail is the un-drained
+    /// suffix, so a bounded drain is lossless.
+    pub fn drain_front(&mut self, limit: usize) -> Vec<Envelope> {
+        let n = limit.min(self.entries.len());
+        self.entries.drain(0..n).collect()
+    }
+
     /// The actionable view: every `Actionable` envelope in causal order (what the CoS acts on).
     pub fn actionable(&self) -> Vec<&Envelope> {
         self.classed(Class::Actionable)
