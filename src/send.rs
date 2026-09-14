@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::journal::EffectJournal;
-use crate::stream::Stream;
+use crate::stream::{Envelope, Stream};
 
 /// The `kind` a producer `send` declares. A producer's message is actionable work for the
 /// recipient — `Stream::classify` maps `note` to `Actionable`, so it always surfaces, never
@@ -71,6 +71,18 @@ impl QueueStore {
     /// The number of pending events.
     pub fn len(&self) -> usize {
         self.stream.entries().len()
+    }
+
+    /// Dequeue up to `limit` pending envelopes (front-first), admitting each in the journal — the
+    /// observable-effect boundary (S2). Returns the drained envelopes in causal order. Lossless: a
+    /// bounded drain leaves the un-drained tail in the stream; `limit >= len()` drains the whole
+    /// queue. The journal `admit` dedup guarantees each effect is enacted exactly once.
+    pub fn drain(&mut self, limit: usize) -> Vec<Envelope> {
+        let drained = self.stream.drain_front(limit);
+        for e in &drained {
+            self.journal.admit(&e.effect_id);
+        }
+        drained
     }
 
     /// Serialize the whole store (stream + journal + sequence) losslessly.
@@ -132,8 +144,9 @@ pub fn has_mail(state_dir: &Path, role: &str) -> bool {
 }
 
 /// Load a station's queue from disk. Missing or empty → an empty queue (first publish); a corrupt
-/// (unparseable) record is LOUD — never silently replaced with an empty queue.
-fn load_queue(state_dir: &Path, role: &str) -> Result<QueueStore> {
+/// (unparseable) record is LOUD — never silently replaced with an empty queue. Shared by `send`
+/// (S1) and `read` (S2).
+pub fn load_queue(state_dir: &Path, role: &str) -> Result<QueueStore> {
     let path = queue_path(state_dir, role);
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -163,9 +176,9 @@ fn load_queue(state_dir: &Path, role: &str) -> Result<QueueStore> {
 }
 
 /// Persist the queue atomically (temp file + rename) so a crash never leaves a half-written
-/// record. One writer per station: the comms-axi `send` verb (the same single-writer rule the
-/// relocated `inbox`/`state` stores follow).
-fn save_queue(state_dir: &Path, role: &str, store: &QueueStore) -> Result<()> {
+/// record. One writer per station: the comms-axi `send`/`read` verbs (the same single-writer rule
+/// the relocated `inbox`/`state` stores follow).
+pub fn save_queue(state_dir: &Path, role: &str, store: &QueueStore) -> Result<()> {
     let path = queue_path(state_dir, role);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -190,6 +203,21 @@ fn set_has_mail(state_dir: &Path, role: &str) -> Result<()> {
     }
     std::fs::write(&path, b"")
         .map_err(|e| Error::operational(format!("hasMail write at {path:?}: {e}"), "QUEUE_IO"))
+}
+
+/// Clear the hasMail marker (the queue is now empty). S1's `send_to` sets it; S2's read/drain
+/// removes it when the last pending event is drained. Idempotent — clearing an absent marker is a
+/// no-op.
+pub fn clear_has_mail(state_dir: &Path, role: &str) -> Result<()> {
+    let path = has_mail_path(state_dir, role);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::operational(
+            format!("hasMail clear at {path:?}: {e}"),
+            "QUEUE_IO",
+        )),
+    }
 }
 
 /// S1 — the deferred publish verb. Enqueues one event to the recipient's local queue and sets its

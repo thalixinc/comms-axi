@@ -1,0 +1,60 @@
+=== validate #21 (read/drain, S2) — 2026-09-14T19:09:17Z ===
+
+$ cargo test --workspace
+running 79 tests
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--- read tests ---
+test read::tests::read_empty_is_no_op
+test read::tests::read_admits_in_the_journal
+test read::tests::read_result_serializes
+test read::tests::read_drains_exactly_once
+test read::tests::read_drains_all_and_clears_has_mail
+test read::tests::read_is_per_station_no_cross_reads
+test read::tests::read_is_bounded_default
+
+$ cargo fmt --check
+fmt: clean (exit 0)
+
+$ cargo clippy --workspace -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+
+$ smoke: send x2 -> read (drain+clear) -> read (no-op) -> drain
+{
+  "role": "coordinator",
+  "effect_id": "coordinator-0",
+  "queued": 1,
+  "has_mail": true
+}
+{
+  "role": "coordinator",
+  "effect_id": "coordinator-1",
+  "queued": 2,
+  "has_mail": true
+}
+{
+  "role": "coordinator",
+  "events": [
+    {
+      "from": "dev-1",
+      "text": "one"
+    },
+    {
+      "from": "dev-2",
+      "text": "two"
+    }
+  ],
+  "remaining": 0,
+  "has_mail": false
+}
+{
+  "role": "coordinator",
+  "events": [],
+  "remaining": 0,
+  "has_mail": false
+}
+marker cleared
