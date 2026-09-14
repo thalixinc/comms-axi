@@ -1,0 +1,43 @@
+=== validate #13 (G1-G5 relocation, move-as-is) — 2026-09-14T01:32:05Z ===
+
+$ cargo test --workspace
+running 57 tests
+test result: ok. 57 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--- relocated modules' tests (unchanged) ---
+test inbox::tests::admit_on_turn_drains_exactly_once
+test inbox::tests::cof_is_passive_every_crew_role_is_active
+test inbox::tests::corrupt_record_is_loud_not_inferred
+test inbox::tests::passive_recipient_is_staged_never_delivered
+test inbox::tests::record_round_trips_losslessly
+test inbox::tests::stage_is_idempotent_by_effect_id
+test inbox::tests::unknown_role_is_active_not_passive
+test journal::tests::corrupt_record_is_loud_not_inferred
+test journal::tests::record_round_trips_losslessly
+test journal::tests::transitions_are_ordered_and_idempotent
+test journal::tests::qual_fault_injection_at_each_boundary_is_lossless_not_duplicated
+test scheduler::tests::oversized_is_refused_intact_never_truncated
+test scheduler::tests::store_full_refuses_with_reason_not_silently
+test stream::tests::a_producer_mislabel_is_downcast_not_protected
+test scheduler::tests::deficit_compensates_a_skipped_team_across_rounds
+test stream::tests::classification_is_server_assigned_not_producer_labelable
+test stream::tests::corrupt_record_is_loud_not_inferred
+test stream::tests::qual_lossless_aggregation_and_causal_ordering
+test stream::tests::record_round_trips_losslessly
+test stream::tests::unknown_kinds_aggregate_by_source_and_expand
+test scheduler::tests::qual_twelve_team_skew_burst_oversized_disk_full_starvation
+test inbox::tests::qual_broker_exclusion_and_admission_race
+
+$ cargo fmt --check
+fmt: clean (exit 0)
+
+$ cargo clippy --workspace -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+
+$ cargo build
+   Compiling comms-axi v0.1.0 (/private/tmp/comms-axi-13)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s

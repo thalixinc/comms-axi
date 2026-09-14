@@ -1,6 +1,5 @@
 //! The versioned fleet resolver (#440 Gate 5), relocated as-is from
-//! `codefactory/src/team/fleet.rs` (the re-home is #13; this is the faithful copy resolve.rs
-//! reads until then).
+//! `codefactory/src/team/fleet.rs` (re-homed in #13).
 //!
 //! ONE versioned resolution source supplies the fleet's effective execution config. The
 //! review.md failure this repairs: the CoS/Team/neutral resolvers kept DIFFERENT defaults and

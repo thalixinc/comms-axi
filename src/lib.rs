@@ -6,7 +6,12 @@
 //! precedence over it.
 
 pub mod adapter;
+pub mod error;
 pub mod event;
 pub mod fleet;
+pub mod inbox;
+pub mod journal;
 pub mod report;
 pub mod resolve;
+pub mod scheduler;
+pub mod stream;
