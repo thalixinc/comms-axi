@@ -6,5 +6,6 @@
 //! precedence over it.
 
 pub mod adapter;
+pub mod event;
 pub mod fleet;
 pub mod resolve;

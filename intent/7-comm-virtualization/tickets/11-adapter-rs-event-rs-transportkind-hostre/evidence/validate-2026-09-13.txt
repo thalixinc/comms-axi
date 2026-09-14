@@ -1,0 +1,35 @@
+=== validate #11 (adapter.rs + event.rs + emit) — 2026-09-14T01:16:31Z ===
+
+$ cargo test --workspace
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo fmt --check
+fmt: clean (exit 0)
+
+$ cargo clippy --workspace -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+
+$ comms-axi emit coordinator 'PR #9 done' --json
+{
+  "adapter": "cmux",
+  "tool": "cmux-axi",
+  "target": "cf-subway-default:coordinator",
+  "text": "PR #9 done"
+}
+
+$ comms-axi emit planner 'spec ready' --record /tmp/emit-herdr.json --json  (fleet gen 3 -> herdr)
+{
+  "adapter": "herdr",
+  "tool": "herdr",
+  "target": "cf-subway-default-planner",
+  "text": "spec ready"
+}
+
+$ comms-axi emit coordinator 'x' --record /tmp/emit-sbox.json  (sbox -> loud error)
+comms-axi: adapter Sbox has no messaging entry in the MESSAGING map
+exit: 1
