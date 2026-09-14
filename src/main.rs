@@ -1,12 +1,14 @@
 //! `comms-axi` — the comm virtualization CLI (lib + bin crate).
 //!
-//! `resolve` (R2) and `emit` (R1/R5) are implemented; `report` (#12) follows.
+//! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish) are implemented.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use comms_axi::event::{send_event, Event};
 use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
+use comms_axi::send::{send_to, Enqueued};
 use serde_json::{json, Value};
 
 const USAGE: &str = "\
@@ -16,16 +18,21 @@ USAGE:
     comms-axi resolve <role> [--run <id>] [--surface <hint>] [--record <path>] [--json]
     comms-axi emit <role> <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
     comms-axi report <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
+    comms-axi send <role> <event> [--state-dir <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
     --surface <hint> R4 surface hint (cos_surface); a stale hint errors loudly
     --record <path>  load the fleet/run record JSON from <path> (else empty record)
-    --json           print the result (StationBinding / Dispatch / Report) as JSON
+    --json           print the result (StationBinding / Dispatch / Report / Enqueued) as JSON
     -h, --help       this help
 
 report resolves the SEAT's own binding (role from $CF_ROLE) and delegates to the adapter's
 return channel — herdr-axi report on herdr, cmux-axi status on cmux.
+
+send enqueues an event to a recipient role's LOCAL queue and sets its hasMail flag (deferred
+publish) — it never resolves-and-fires into a live session. The sender is $CF_ROLE; the queue
+lives under --state-dir (default $COMMS_AXI_STATE_DIR or $HOME/.omp/state).
 ";
 
 fn main() -> ExitCode {
@@ -49,6 +56,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         "resolve" => cmd_resolve(&args[1..]),
         "emit" => cmd_emit(&args[1..]),
         "report" => cmd_report(&args[1..]),
+        "send" => cmd_send(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -200,4 +208,61 @@ fn cmd_report(args: &[String]) -> Result<ExitCode, String> {
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_send(args: &[String]) -> Result<ExitCode, String> {
+    if args.len() < 2 {
+        return Err("send requires <role> <event>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+    let payload = &args[1];
+
+    let mut state_dir: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--state-dir" => {
+                i += 1;
+                state_dir = Some(args.get(i).cloned().ok_or("--state-dir needs a value")?);
+            }
+            "--json" => json_out = true,
+            other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
+        }
+        i += 1;
+    }
+
+    // The seat's own role is the sender; the queue lives under the station's state dir.
+    let sender = std::env::var("CF_ROLE")
+        .map_err(|_| "send needs the sender's own role: set $CF_ROLE".to_string())?;
+    let dir = resolve_state_dir(state_dir.as_deref());
+
+    let enq: Enqueued = send_to(&dir, role, &sender, payload).map_err(|e| e.to_string())?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&enq).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "send -> {}: queued={} effect_id={} has_mail={} (deferred; recipient pulls on idle)",
+            role, enq.queued, enq.effect_id, enq.has_mail
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The state dir: `--state-dir` wins, else `$COMMS_AXI_STATE_DIR`, else `$HOME/.omp/state`.
+fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
+    if let Some(p) = flag {
+        return PathBuf::from(p);
+    }
+    if let Ok(p) = std::env::var("COMMS_AXI_STATE_DIR") {
+        if !p.trim().is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".omp").join("state")
 }
