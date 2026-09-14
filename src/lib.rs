@@ -14,4 +14,5 @@ pub mod journal;
 pub mod report;
 pub mod resolve;
 pub mod scheduler;
+pub mod send;
 pub mod stream;
