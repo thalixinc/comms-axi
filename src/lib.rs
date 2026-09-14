@@ -17,3 +17,4 @@ pub mod resolve;
 pub mod scheduler;
 pub mod send;
 pub mod stream;
+pub mod wake;
