@@ -110,3 +110,123 @@ pub struct StationBinding {
     pub session_id: String,
     pub route: Route,
 }
+
+/// The peer-messaging contract a surface maps to (the #463 SURFACE→ADAPTER map, folded in).
+/// `adapter` is the AdapterKind that surface binds; `tool` is the peer-messaging tool; the
+/// `send`/`report` templates are the surface-specific verbs a producer renders. Derived from the
+/// [`MESSAGING`] map — never a hard-coded `tool` column, never a cmux-vs-herdr `if/else`.
+///
+/// Template placeholders: `{PROJ}` project token, `{TARGET}` send target, `{TEXT}` message body,
+/// `{STATUS_ARGS}` an omp-only status-verb suffix (absent on herdr).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MessagingAdapter {
+    pub adapter: AdapterKind,
+    /// The peer-messaging tool (the role card's `tool` column).
+    pub tool: &'static str,
+    /// The turn-report / return-channel tool (`herdr-axi` on herdr).
+    pub report_tool: &'static str,
+    /// The peer-send verb template (surface-specific syntax + target).
+    pub send: &'static str,
+    /// The turn-report verb template (return channel), surface-specific.
+    pub report: &'static str,
+}
+
+/// SURFACE → ADAPTER MAP (the #463 fold): one entry per surface; `omp` (cmux) is the default entry
+/// — an unset/unknown surface resolves it, back-compat with existing cmux crews.
+pub const MESSAGING: &[(&str, MessagingAdapter)] = &[
+    (
+        "omp",
+        MessagingAdapter {
+            adapter: AdapterKind::Cmux,
+            tool: "cmux-axi",
+            report_tool: "cmux-axi",
+            send: "cmux-axi send {PROJ} {TARGET} \"{TEXT}\"",
+            report: "cmux-axi status --project {PROJ}{STATUS_ARGS}",
+        },
+    ),
+    (
+        "herdr",
+        MessagingAdapter {
+            adapter: AdapterKind::Herdr,
+            tool: "herdr",
+            report_tool: "herdr-axi",
+            send: "herdr agent prompt {TARGET} \"{TEXT}\"",
+            report: "herdr-axi report \"<text>\"",
+        },
+    ),
+];
+
+/// Resolve a surface to its messaging adapter, defaulting to the `omp` (cmux) entry for any
+/// unset/unknown surface — the same precedence `resolve_surface` produces.
+pub fn messaging_for(surface: &str) -> MessagingAdapter {
+    MESSAGING
+        .iter()
+        .find(|(s, _)| *s == surface)
+        .map(|(_, m)| *m)
+        .unwrap_or(MESSAGING[0].1)
+}
+
+/// The messaging entry for an adapter kind — the lookup `send_event` uses, which dispatches on
+/// `binding.adapter` (never a surface string). `None` for `Sbox`: a sandbox station's send
+/// transport is the sandbox adapter's concern, not a surface template.
+pub fn messaging_for_adapter(adapter: AdapterKind) -> Option<MessagingAdapter> {
+    MESSAGING
+        .iter()
+        .find(|(_, m)| m.adapter == adapter)
+        .map(|(_, m)| *m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messaging_map_resolves_surface_to_adapter() {
+        assert_eq!(messaging_for("omp").adapter, AdapterKind::Cmux);
+        assert_eq!(messaging_for("herdr").adapter, AdapterKind::Herdr);
+    }
+
+    #[test]
+    fn messaging_map_defaults_unknown_surface_to_omp() {
+        assert_eq!(messaging_for("bogus").adapter, AdapterKind::Cmux);
+        assert_eq!(messaging_for("").adapter, AdapterKind::Cmux);
+    }
+
+    #[test]
+    fn messaging_map_has_one_entry_per_surface() {
+        assert_eq!(MESSAGING.len(), 2);
+        let surfaces: Vec<&str> = MESSAGING.iter().map(|(s, _)| *s).collect();
+        assert_eq!(surfaces, vec!["omp", "herdr"]);
+    }
+
+    #[test]
+    fn messaging_for_adapter_maps_built_adapters() {
+        assert_eq!(
+            messaging_for_adapter(AdapterKind::Cmux).unwrap().tool,
+            "cmux-axi"
+        );
+        assert_eq!(
+            messaging_for_adapter(AdapterKind::Herdr).unwrap().tool,
+            "herdr"
+        );
+        assert!(messaging_for_adapter(AdapterKind::Sbox).is_none());
+    }
+
+    #[test]
+    fn transport_kind_names_round_trip() {
+        for kind in [
+            TransportKind::LocalSocket,
+            TransportKind::Tailscale,
+            TransportKind::Ssh,
+            TransportKind::HerdrMachine,
+            TransportKind::SboxRemote,
+        ] {
+            assert_eq!(TransportKind::from_str(kind.as_str()).unwrap(), kind);
+        }
+    }
+
+    #[test]
+    fn local_socket_is_the_built_transport() {
+        assert_eq!(TransportKind::LocalSocket.as_str(), "local-socket");
+    }
+}

@@ -1,10 +1,11 @@
 //! `comms-axi` — the comm virtualization CLI (lib + bin crate).
 //!
-//! Only the `resolve` verb exists in this slice (R2); `emit` (#11) and `report` (#12) follow.
+//! `resolve` (R2) and `emit` (R1/R5) are implemented; `report` (#12) follows.
 
 use std::process::ExitCode;
 
-use comms_axi::resolve::{resolve_role, ResolveError};
+use comms_axi::event::{send_event, Event};
+use comms_axi::resolve::resolve_role;
 use serde_json::{json, Value};
 
 const USAGE: &str = "\
@@ -12,12 +13,13 @@ comms-axi — surface-agnostic agent messaging plane
 
 USAGE:
     comms-axi resolve <role> [--run <id>] [--surface <hint>] [--record <path>] [--json]
+    comms-axi emit <role> <event> [--run <id>] [--surface <hint>] [--record <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
     --surface <hint> R4 surface hint (cos_surface); a stale hint errors loudly
     --record <path>  load the fleet/run record JSON from <path> (else empty record)
-    --json           print the StationBinding as JSON
+    --json           print the result (StationBinding / Dispatch) as JSON
     -h, --help       this help
 ";
 
@@ -40,46 +42,56 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
 
     match args[0].as_str() {
         "resolve" => cmd_resolve(&args[1..]),
+        "emit" => cmd_emit(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
 
-fn cmd_resolve(args: &[String]) -> Result<ExitCode, String> {
-    if args.is_empty() {
-        return Err("resolve requires a <role>; try `comms-axi --help`".to_string());
-    }
-    let role = &args[0];
+/// The shared `--run` / `--surface` / `--record` / `--json` flags (R4 hint, G5 record).
+struct CommonOpts {
+    run: String,
+    surface: Option<String>,
+    record_path: Option<String>,
+    json: bool,
+}
 
-    let mut run = "default".to_string();
-    let mut surface: Option<String> = None;
-    let mut record_path: Option<String> = None;
-    let mut json_out = false;
-
-    let mut i = 1;
+fn parse_common(args: &[String]) -> Result<CommonOpts, String> {
+    let mut opts = CommonOpts {
+        run: "default".to_string(),
+        surface: None,
+        record_path: None,
+        json: false,
+    };
+    let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--run" => {
                 i += 1;
-                run = args.get(i).cloned().ok_or("--run needs a value")?;
+                opts.run = args.get(i).cloned().ok_or("--run needs a value")?;
             }
             "--surface" => {
                 i += 1;
-                surface = Some(args.get(i).cloned().ok_or("--surface needs a value")?);
+                opts.surface = Some(args.get(i).cloned().ok_or("--surface needs a value")?);
             }
             "--record" => {
                 i += 1;
-                record_path = Some(args.get(i).cloned().ok_or("--record needs a value")?);
+                opts.record_path = Some(args.get(i).cloned().ok_or("--record needs a value")?);
             }
-            "--json" => json_out = true,
+            "--json" => opts.json = true,
             other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
         }
         i += 1;
     }
+    Ok(opts)
+}
 
+/// Load the fleet/run record from `--record` (else empty), then layer the `--surface` hint into
+/// `cos_surface` (R4).
+fn load_record(record_path: Option<&str>, surface: Option<&str>) -> Result<Value, String> {
     let mut record = match record_path {
         Some(path) => {
             let bytes =
-                std::fs::read(&path).map_err(|e| format!("cannot read record {path:?}: {e}"))?;
+                std::fs::read(path).map_err(|e| format!("cannot read record {path:?}: {e}"))?;
             serde_json::from_slice::<Value>(&bytes)
                 .map_err(|e| format!("record {path:?} is not valid JSON: {e}"))?
         }
@@ -88,10 +100,20 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, String> {
     if let Some(hint) = surface {
         record["cos_surface"] = json!(hint);
     }
+    Ok(record)
+}
 
-    let binding = resolve_role(role, &run, &record).map_err(resolve_err_to_string)?;
+fn cmd_resolve(args: &[String]) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("resolve requires a <role>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+    let opts = parse_common(&args[1..])?;
+    let record = load_record(opts.record_path.as_deref(), opts.surface.as_deref())?;
 
-    if json_out {
+    let binding = resolve_role(role, &opts.run, &record).map_err(|e| e.to_string())?;
+
+    if opts.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&binding).map_err(|e| e.to_string())?
@@ -113,6 +135,32 @@ fn cmd_resolve(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn resolve_err_to_string(e: ResolveError) -> String {
-    e.to_string()
+fn cmd_emit(args: &[String]) -> Result<ExitCode, String> {
+    if args.len() < 2 {
+        return Err("emit requires <role> <event>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+    let payload = &args[1];
+    let opts = parse_common(&args[2..])?;
+    let record = load_record(opts.record_path.as_deref(), opts.surface.as_deref())?;
+
+    let binding = resolve_role(role, &opts.run, &record).map_err(|e| e.to_string())?;
+    let dispatch = send_event(&binding, &Event::new(role, payload)).map_err(|e| e.to_string())?;
+
+    if opts.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&dispatch).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "emit -> {}: adapter={} tool={} target={} text={:?}",
+            role,
+            dispatch.adapter.as_str(),
+            dispatch.tool,
+            dispatch.target,
+            dispatch.text
+        );
+    }
+    Ok(ExitCode::SUCCESS)
 }
