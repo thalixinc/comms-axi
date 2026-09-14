@@ -64,12 +64,6 @@ Concretely, `comms-axi` becomes a standalone Rust CLI whose core is:
   herdr-axi); cmux/herdr/sbox execution; story/initiative tiers, team-eval, board UI.
 
 ## Open questions
-1. **Cutover mechanics** — when the moved primitives (`resolve_binding`, `send_event`, G1–G5) land
-   in comms-axi, are the cf/herdr-axi copies deleted in the same change, or left as thin shims over
-   comms-axi until every producer is re-wired? (R3 "delete the literals" vs R5 "no second path"
-   must reconcile.)
-2. **CLI surface** — the concrete verbs/args of the `comms-axi` binary (resolve / emit / report)
-   and how a producer invokes `send_event`; to be settled in design.
-3. **Re-home boundary of `report`** — the return-channel producer moves to comms-axi, while the
-   producer-side herdr-axi `report` verb stays in herdr-axi; the exact seam between the two needs
-   pinning in design.
+- **Cutover mechanics** — when the moved primitives (`resolve_binding`, `send_event`, G1–G5) land in comms-axi, are the cf/herdr-axi copies deleted in the same change, or left as thin shims over comms-axi until every producer is re-wired? (R3 "delete the literals" vs R5 "no second path" must reconcile.)
+- **CLI surface** — the concrete verbs/args of the `comms-axi` binary (resolve / emit / report) and how a producer invokes `send_event`; to be settled in design.
+- **Re-home boundary of `report`** — the return-channel producer moves to comms-axi, while the producer-side herdr-axi `report` verb stays in herdr-axi; the exact seam between the two needs pinning in design.
