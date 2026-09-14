@@ -101,6 +101,8 @@ pub struct Route {
 /// A resolved station binding (fleet-wide shape, R2). The seat never sees this; producers consume
 /// it. `adapter` is the SURFACE, `host` + `transport` are the remote-aware dimension,
 /// `surface_ref`/`session_id` are the ids ON that host, and `route` is the host-qualified handle.
+/// `wake` reserves the wake mechanism (S5 scaffold): `HeartbeatPoll` is wired now (the S3
+/// hasMail-gated idle heartbeat); `Webhook` is a named placeholder for ThalixRuntime later.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StationBinding {
     pub adapter: AdapterKind,
@@ -109,6 +111,30 @@ pub struct StationBinding {
     pub surface_ref: String,
     pub session_id: String,
     pub route: Route,
+    pub wake: WakeKind,
+}
+
+/// How a station is re-woken when it has pending mail (S5 scaffold). `HeartbeatPoll` is the only
+/// wired variant — the S3 hasMail-gated idle heartbeat (omp/pi). `Webhook` is a NAMED placeholder
+/// for ThalixRuntime's instant-wake, reserved so it lands as an additive adapter, not a re-design.
+/// Do NOT build the webhook/acp/socket/API here — it is backlog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum WakeKind {
+    /// The hasMail-gated idle heartbeat (omp/pi) — wired now.
+    #[default]
+    HeartbeatPoll,
+    /// ThalixRuntime instant-wake — named/backlog, NOT built.
+    Webhook,
+}
+
+impl WakeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WakeKind::HeartbeatPoll => "heartbeat-poll",
+            WakeKind::Webhook => "webhook",
+        }
+    }
 }
 
 /// The peer-messaging contract a surface maps to (the #463 SURFACE→ADAPTER map, folded in).
@@ -228,5 +254,25 @@ mod tests {
     #[test]
     fn local_socket_is_the_built_transport() {
         assert_eq!(TransportKind::LocalSocket.as_str(), "local-socket");
+    }
+
+    #[test]
+    fn wake_kind_defaults_to_heartbeat_poll() {
+        // The only wired wake is the hasMail-gated heartbeat; Webhook is a named backlog variant.
+        assert_eq!(WakeKind::default(), WakeKind::HeartbeatPoll);
+        assert_eq!(WakeKind::HeartbeatPoll.as_str(), "heartbeat-poll");
+        assert_eq!(WakeKind::Webhook.as_str(), "webhook");
+    }
+
+    #[test]
+    fn wake_kind_serializes() {
+        assert_eq!(
+            serde_json::to_value(WakeKind::HeartbeatPoll).unwrap(),
+            serde_json::json!("heartbeat-poll")
+        );
+        assert_eq!(
+            serde_json::to_value(WakeKind::Webhook).unwrap(),
+            serde_json::json!("webhook")
+        );
     }
 }

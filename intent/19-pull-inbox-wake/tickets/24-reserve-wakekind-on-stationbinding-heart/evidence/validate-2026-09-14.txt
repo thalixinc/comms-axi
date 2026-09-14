@@ -1,0 +1,117 @@
+== cargo test ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running unittests src/lib.rs (target/debug/deps/comms_axi-a894b5d383403980)
+
+running 74 tests
+test adapter::tests::local_socket_is_the_built_transport ... ok
+test adapter::tests::messaging_for_adapter_maps_built_adapters ... ok
+test adapter::tests::messaging_map_defaults_unknown_surface_to_omp ... ok
+test adapter::tests::messaging_map_resolves_surface_to_adapter ... ok
+test adapter::tests::messaging_map_has_one_entry_per_surface ... ok
+test adapter::tests::transport_kind_names_round_trip ... ok
+test adapter::tests::wake_kind_defaults_to_heartbeat_poll ... ok
+test adapter::tests::wake_kind_serializes ... ok
+test event::tests::send_event_dispatches_cmux_by_adapter ... ok
+test event::tests::dispatch_serializes_with_adapter_tool_target_text ... ok
+test event::tests::send_event_dispatches_herdr_by_adapter ... ok
+test event::tests::send_event_follows_binding_adapter_not_surface_string ... ok
+test event::tests::send_event_sbox_has_no_messaging_template ... ok
+test fleet::tests::change_default_does_not_affect_an_active_profile ... ok
+test fleet::tests::corrupt_record_is_loud_not_inferred ... ok
+test fleet::tests::legacy_cos_surface_migrates_explicitly_with_herdr_default ... ok
+test fleet::tests::mid_launch_partial_failure_is_truthfully_reported_not_silent_default ... ok
+test fleet::tests::override_inherits_fleet_default_never_replaces ... ok
+test fleet::tests::partial_override_resolves_to_a_complete_profile ... ok
+test fleet::tests::stamped_profile_round_trips_through_the_record ... ok
+test inbox::tests::admit_on_turn_drains_exactly_once ... ok
+test inbox::tests::cof_is_passive_every_crew_role_is_active ... ok
+test inbox::tests::corrupt_record_is_loud_not_inferred ... ok
+test inbox::tests::passive_recipient_is_staged_never_delivered ... ok
+test inbox::tests::record_round_trips_losslessly ... ok
+test inbox::tests::stage_is_idempotent_by_effect_id ... ok
+test inbox::tests::unknown_role_is_active_not_passive ... ok
+test journal::tests::corrupt_record_is_loud_not_inferred ... ok
+test journal::tests::qual_fault_injection_at_each_boundary_is_lossless_not_duplicated ... ok
+test journal::tests::record_round_trips_losslessly ... ok
+test journal::tests::transitions_are_ordered_and_idempotent ... ok
+test report::tests::report_delegates_herdr_return_channel ... ok
+test report::tests::report_follows_binding_adapter_not_surface_string ... ok
+test report::tests::report_resolves_own_binding_and_delegates_cmux ... ok
+test report::tests::report_sbox_has_no_return_channel ... ok
+test report::tests::report_serializes_with_adapter_tool_text ... ok
+test report::tests::report_surfaces_resolve_error_loudly ... ok
+test resolve::tests::binding_serializes_with_host_and_transport ... ok
+test resolve::tests::empty_record_resolves_local_host_and_default_surface ... ok
+test resolve::tests::explicit_instance_adapter_wins_over_surface_and_sbox ... ok
+test resolve::tests::fleet_named_blank_override_key_reports_g5_error ... ok
+test resolve::tests::fleet_override_resolves_surface_via_g5 ... ok
+test resolve::tests::host_first_resolves_transport_from_registry ... ok
+test resolve::tests::nonlocal_host_without_registry_entry_errors_loudly ... ok
+test resolve::tests::persistent_station_session_is_a_dir ... ok
+test resolve::tests::remote_transport_is_named_not_built ... ok
+test resolve::tests::sbox_allocation_binds_sbox_adapter ... ok
+test resolve::tests::split_environment_binds_per_role ... ok
+test resolve::tests::stale_hint_contradicting_binding_errors_loudly ... ok
+test resolve::tests::surface_precedence_explicit_override_wins ... ok
+test resolve::tests::surface_precedence_fleet_record_beats_hint ... ok
+test resolve::tests::surface_precedence_hint_beats_default ... ok
+test resolve::tests::unknown_instance_adapter_errors_loudly ... ok
+test resolve::tests::unknown_transport_errors_loudly ... ok
+test scheduler::tests::oversized_is_refused_intact_never_truncated ... ok
+test scheduler::tests::store_full_refuses_with_reason_not_silently ... ok
+test scheduler::tests::deficit_compensates_a_skipped_team_across_rounds ... ok
+test send::tests::corrupt_store_record_missing_keys_is_loud ... ok
+test send::tests::enqueue_reuses_journal_dedup_for_same_id ... ok
+test send::tests::empty_mailbox_has_no_mail_flag ... ok
+test send::tests::corrupt_queue_record_is_loud_not_replaced ... ok
+test stream::tests::a_producer_mislabel_is_downcast_not_protected ... ok
+test send::tests::store_round_trips_through_the_record ... ok
+test stream::tests::classification_is_server_assigned_not_producer_labelable ... ok
+test stream::tests::qual_lossless_aggregation_and_causal_ordering ... ok
+test stream::tests::corrupt_record_is_loud_not_inferred ... ok
+test stream::tests::record_round_trips_losslessly ... ok
+test stream::tests::unknown_kinds_aggregate_by_source_and_expand ... ok
+test scheduler::tests::qual_twelve_team_skew_burst_oversized_disk_full_starvation ... ok
+test send::tests::send_is_deferred_never_fires ... ok
+test send::tests::send_enqueues_and_sets_has_mail ... ok
+test send::tests::send_appends_in_order_with_distinct_effect_ids ... ok
+test send::tests::send_is_per_station_no_cross_writes ... ok
+test inbox::tests::qual_broker_exclusion_and_admission_race ... ok
+
+test result: ok. 74 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/comms_axi-49cab2b052e6dc36)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests comms_axi
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+== cargo fmt --check ==
+fmt: ok
+
+== cargo clippy --workspace -- -D warnings ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+
+== smoke: resolve coordinator --json (wake field) ==
+{
+  "adapter": "cmux",
+  "host": {
+    "name": "local"
+  },
+  "transport": "local-socket",
+  "surface_ref": "cf-subway-default:coordinator",
+  "session_id": "ephemeral",
+  "route": {
+    "host": "local",
+    "surface": "omp",
+    "generation": 0
+  },
+  "wake": "heartbeat-poll"
+}

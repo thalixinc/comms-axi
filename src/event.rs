@@ -84,7 +84,7 @@ pub fn send_event(binding: &StationBinding, event: &Event) -> Result<Dispatch, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::{HostRef, Route, TransportKind};
+    use crate::adapter::{HostRef, Route, TransportKind, WakeKind};
 
     fn binding(adapter: AdapterKind) -> StationBinding {
         StationBinding {
@@ -100,6 +100,7 @@ mod tests {
                 surface: "omp".to_string(),
                 generation: 0,
             },
+            wake: WakeKind::HeartbeatPoll,
         }
     }
 
