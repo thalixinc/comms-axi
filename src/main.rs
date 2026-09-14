@@ -39,7 +39,8 @@ return channel — herdr-axi report on herdr, cmux-axi status on cmux.
 
 send enqueues an event to a recipient role's LOCAL queue and sets its hasMail flag (deferred
 publish) — it never resolves-and-fires into a live session. The sender is $CF_ROLE; the queue
-lives under --state-dir (default $COMMS_AXI_STATE_DIR or $HOME/.omp/state).
+lives under --state-dir (default $COMMS_AXI_STATE_DIR, else $CF_COF_HOME/.omp/state, else
+$HOME/.omp/state).
 
 read pulls a role's queue on demand (bounded by default, --all drains everything); drain is an
 alias for read --all. Both clear hasMail when the queue empties and render the drained events as
@@ -359,7 +360,13 @@ fn cmd_wake(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The state dir: `--state-dir` wins, else `$COMMS_AXI_STATE_DIR`, else `$HOME/.omp/state`.
+/// The state dir: `--state-dir` wins, else `$COMMS_AXI_STATE_DIR`, else
+/// `$CF_COF_HOME/.omp/state`, else `$HOME/.omp/state`.
+///
+/// `$CF_COF_HOME` is cf's tracked CoS home — the single source of truth cf's heartbeat reader
+/// (#497) anchors on. When it is set, the comms-axi WRITER (`send`/`read`/`wake`) must land its
+/// `hasMail` marker on the same path the READER stats, or the pull loop is perma-dead on machines
+/// where `$HOME` != `$CF_COF_HOME`.
 fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
     if let Some(p) = flag {
         return PathBuf::from(p);
@@ -369,6 +376,90 @@ fn resolve_state_dir(flag: Option<&str>) -> PathBuf {
             return PathBuf::from(p);
         }
     }
+    if let Ok(p) = std::env::var("CF_COF_HOME") {
+        if !p.trim().is_empty() {
+            return PathBuf::from(p).join(".omp").join("state");
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from(home).join(".omp").join("state")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_state_dir;
+
+    // Env mutation is process-global; these tests are the only ones in the bin crate and run
+    // serial by default, but we still restore every var we touch so the suite stays hermetic.
+    fn clear(keys: &[&str]) {
+        for k in keys {
+            std::env::remove_var(k);
+        }
+    }
+
+    fn set(key: &str, val: &str) {
+        std::env::set_var(key, val);
+    }
+
+    #[test]
+    fn flag_wins_over_all_env() {
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        set("CF_COF_HOME", "/cf/home");
+        set("COMMS_AXI_STATE_DIR", "/env/state");
+        set("HOME", "/home/user");
+        assert_eq!(
+            resolve_state_dir(Some("/flag/dir")),
+            std::path::PathBuf::from("/flag/dir")
+        );
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
+
+    #[test]
+    fn comms_axi_state_dir_beats_cf_cof_home() {
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        set("CF_COF_HOME", "/cf/home");
+        set("COMMS_AXI_STATE_DIR", "/env/state");
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/env/state")
+        );
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
+
+    #[test]
+    fn cf_cof_home_anchors_when_set() {
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        set("CF_COF_HOME", "/cf/home");
+        set("HOME", "/home/user");
+        // CF_COF_HOME set → <CF_COF_HOME>/.omp/state (the cf reader #497 path).
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/cf/home/.omp/state")
+        );
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
+
+    #[test]
+    fn home_fallback_when_cf_cof_home_unset() {
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        set("HOME", "/home/user");
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/home/user/.omp/state")
+        );
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
+
+    #[test]
+    fn empty_cf_cof_home_does_not_anchor() {
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+        set("CF_COF_HOME", "");
+        set("HOME", "/home/user");
+        // An empty CF_COF_HOME is not a home — fall through to $HOME.
+        assert_eq!(
+            resolve_state_dir(None),
+            std::path::PathBuf::from("/home/user/.omp/state")
+        );
+        clear(&["COMMS_AXI_STATE_DIR", "CF_COF_HOME", "HOME"]);
+    }
 }
