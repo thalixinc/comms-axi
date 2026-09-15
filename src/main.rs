@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use comms_axi::event::{send_event, Event};
+use comms_axi::event::{send_event, Event, SendOutcome};
 use comms_axi::read::read as read_queue;
 use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
@@ -176,22 +176,62 @@ fn cmd_emit(args: &[String]) -> Result<ExitCode, String> {
     let record = load_record(opts.record_path.as_deref(), opts.surface.as_deref())?;
 
     let binding = resolve_role(role, &opts.run, &record).map_err(|e| e.to_string())?;
-    let dispatch = send_event(&binding, &Event::new(role, payload)).map_err(|e| e.to_string())?;
+    // CF_COMMS_MODE is read ONCE here (the ADDITIVE gate); the lib stays pure.
+    let mode = std::env::var("CF_COMMS_MODE").ok();
+    let outcome = send_event(&binding, &Event::new(role, payload), mode.as_deref())
+        .map_err(|e| e.to_string())?;
 
     if opts.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&dispatch).map_err(|e| e.to_string())?
-        );
+        // Byte-stable default: the Render path serializes the Dispatch EXACTLY as before (no new
+        // wrapper). Only the additive Deliver path introduces a new shape.
+        match &outcome {
+            SendOutcome::Render(d) => println!(
+                "{}",
+                serde_json::to_string_pretty(d).map_err(|e| e.to_string())?
+            ),
+            SendOutcome::Deliver(delivery) => println!(
+                "{}",
+                serde_json::to_string_pretty(delivery).map_err(|e| e.to_string())?
+            ),
+        }
     } else {
-        println!(
-            "emit -> {}: adapter={} tool={} target={} text={:?}",
-            role,
-            dispatch.adapter.as_str(),
-            dispatch.tool,
-            dispatch.target,
-            dispatch.text
-        );
+        match outcome {
+            SendOutcome::Render(d) => {
+                println!(
+                    "emit -> {}: adapter={} tool={} target={} text={:?}",
+                    role,
+                    d.adapter.as_str(),
+                    d.tool,
+                    d.target,
+                    d.text
+                );
+            }
+            SendOutcome::Deliver(delivery) => {
+                // Open the REAL channel (ssh exec / tailscale socket / herdr machine) and inject
+                // the envelope into the remote cof — not just a resolved Dispatch.
+                let status = delivery.open().map_err(|e| {
+                    format!(
+                        "delivery channel failed (transport={} host={}): {e}",
+                        delivery.transport.as_str(),
+                        delivery.host
+                    )
+                })?;
+                if !status.success() {
+                    return Err(format!(
+                        "delivery channel exited {status} (transport={} host={})",
+                        delivery.transport.as_str(),
+                        delivery.host
+                    ));
+                }
+                println!(
+                    "emit -> {}: delivered transport={} host={} effect_id={} (channel ok)",
+                    role,
+                    delivery.transport.as_str(),
+                    delivery.host,
+                    delivery.envelope.effect_id
+                );
+            }
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

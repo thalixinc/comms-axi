@@ -66,6 +66,19 @@ impl TransportKind {
     }
 }
 
+impl TransportKind {
+    /// The transports that DELIVER cross-host (epic #31): `ssh` (exec a remote command),
+    /// `tailscale` (a socket over the tailnet), `herdr-machine` (ride herdr — the carrier — to a
+    /// machine). `LocalSocket` is the in-host render path and `SboxRemote` is the sandbox adapter's
+    /// concern; neither opens a cross-host channel here.
+    pub fn is_cross_host(self) -> bool {
+        matches!(
+            self,
+            TransportKind::Ssh | TransportKind::Tailscale | TransportKind::HerdrMachine
+        )
+    }
+}
+
 impl FromStr for TransportKind {
     type Err = String;
 

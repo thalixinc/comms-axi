@@ -6,6 +6,7 @@
 //! precedence over it.
 
 pub mod adapter;
+pub mod delivery;
 pub mod error;
 pub mod event;
 pub mod fleet;
