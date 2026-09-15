@@ -16,8 +16,9 @@
 //!    tautological until this listener actually validates the wire value).
 //! 4. **NO teardown, preserve in-flight** — the envelope carries a STABLE effect id; the listener
 //!    enqueues UNDER that id (not the local per-station sequence), so the journal's `prepare` dedup
-//!    is already keyed on it — a mid-swap re-send of the same id is acknowledged, not re-enacted.
-//!    Dedup is #35; here the listener establishes the STABLE axis (so #35 is additive).
+//!    is keyed on it. A re-delivery of an already-journaled id is ACKNOWLEDGED but NOT re-enacted
+//!    (the #35 idempotency guarantee: `Accepted.duplicate` is `true`), so a mid-swap re-send
+//!    survives — no lost envelope, no double injection.
 //!
 //! **Sender attribution (honest gap).** The #32 envelope is `{version, effect_id, to, payload}` —
 //!    it carries NO `from`/sender identity. The listener therefore records
@@ -38,14 +39,16 @@ use crate::send::send_to_with_id;
 pub const REMOTE_SENDER: &str = "remote";
 
 /// The receipt the inbound listener returns: what was accepted, for which role, and the resulting
-/// `hasMail` state. `effect_id` is the envelope's STABLE id (carried through for #35 dedup
-/// correlation), not the local per-station sequence the queue assigned.
+/// `hasMail` state. `effect_id` is the envelope's STABLE id (the #35 dedup axis), not the local
+/// per-station sequence the queue assigned. `duplicate` is `true` when the effect id was already
+/// journaled (a re-delivery — acknowledged but NOT re-enacted, the idempotency guarantee).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Accepted {
     pub role: String,
     pub effect_id: String,
     pub queued: usize,
     pub has_mail: bool,
+    pub duplicate: bool,
 }
 
 /// The inbound listener. Accepts a delivered envelope (the #32 wire JSON), enforces the
@@ -93,6 +96,7 @@ pub fn accept(envelope_json: &str, state_dir: &Path) -> Result<Accepted> {
         effect_id: enqueued.effect_id,
         queued: enqueued.queued,
         has_mail: enqueued.has_mail,
+        duplicate: enqueued.duplicate,
     })
 }
 
@@ -227,5 +231,54 @@ mod tests {
         assert_eq!(v["queued"], 1);
         assert_eq!(v["has_mail"], true);
         assert_eq!(v["effect_id"], json!(stable_effect_id("cof", "hi")));
+        assert_eq!(v["duplicate"], json!(false));
+    }
+
+    #[test]
+    fn accept_redelivery_is_idempotent_not_double_injected() {
+        // The #35 idempotency guarantee, end-to-end: a re-delivery of the SAME envelope (same
+        // STABLE effect id) is acknowledged but NOT re-enacted — queued stays 1 pre-drain, and
+        // stays 0 post-drain (no double injection across the transition).
+        let dir = tmpdir("accept-idempotent");
+        let env = envelope_json("cof", "done: PR #9");
+
+        // Fresh delivery: enqueued, not a duplicate.
+        let first = accept(&env, &dir).unwrap();
+        assert!(!first.duplicate);
+        assert_eq!(first.queued, 1);
+        assert!(first.has_mail);
+
+        // Re-delivery BEFORE drain: deduped — queued stays 1, flagged duplicate.
+        let second = accept(&env, &dir).unwrap();
+        assert!(second.duplicate, "pre-drain re-delivery is a duplicate");
+        assert_eq!(second.queued, 1, "never double-injects");
+
+        // Drain (S2 read/inject): the turn is consumed.
+        crate::read::read(&dir, "cof", true).unwrap();
+        assert!(!has_mail(&dir, "cof"));
+
+        // Re-delivery AFTER drain (the mid-swap re-send): deduped — NOT re-enacted.
+        let third = accept(&env, &dir).unwrap();
+        assert!(third.duplicate, "post-drain re-delivery is a duplicate");
+        assert_eq!(third.queued, 0, "a consumed effect is never re-enacted");
+        assert!(!third.has_mail);
+        assert!(!has_mail(&dir, "cof"));
+    }
+
+    #[test]
+    fn accept_dedup_keys_on_stable_id_not_local_seq() {
+        // Two distinct payloads share NO stable id; each is enqueued (not falsely deduped). The
+        // dedup axis is the FNV-1a stable id, NOT the local per-station `{role}-{seq}` sequence.
+        let dir = tmpdir("accept-stable-key");
+        let a = accept(&envelope_json("cof", "one"), &dir).unwrap();
+        let b = accept(&envelope_json("cof", "two"), &dir).unwrap();
+        assert!(!a.duplicate);
+        assert!(!b.duplicate);
+        assert_ne!(a.effect_id, b.effect_id);
+        let store = load_queue(&dir, "cof").unwrap();
+        assert_eq!(store.len(), 2, "distinct stable ids both enqueued");
+        // The stable id is what the journal recorded, not `cof-0`/`cof-1`.
+        assert_eq!(store.stream.entries()[0].effect_id, a.effect_id);
+        assert_eq!(store.stream.entries()[1].effect_id, b.effect_id);
     }
 }
