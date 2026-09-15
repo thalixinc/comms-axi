@@ -1,6 +1,6 @@
 [package]
 name = "comms-axi"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Surface-agnostic agent messaging plane: event-to-role comm over resolve_binding"
 license = "MIT"
