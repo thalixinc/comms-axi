@@ -447,10 +447,17 @@ fn cmd_deliver(args: &[String]) -> Result<ExitCode, String> {
             serde_json::to_string_pretty(&accepted).map_err(|e| e.to_string())?
         );
     } else {
-        println!(
-            "deliver -> {}: queued={} effect_id={} has_mail={} (accepted; station pulls on idle)",
-            accepted.role, accepted.queued, accepted.effect_id, accepted.has_mail
-        );
+        if accepted.duplicate {
+            println!(
+                "deliver -> {}: duplicate effect_id={} (acknowledged, not re-enacted; queued={} has_mail={})",
+                accepted.role, accepted.effect_id, accepted.queued, accepted.has_mail
+            );
+        } else {
+            println!(
+                "deliver -> {}: queued={} effect_id={} has_mail={} (accepted; station pulls on idle)",
+                accepted.role, accepted.queued, accepted.effect_id, accepted.has_mail
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

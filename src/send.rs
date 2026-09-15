@@ -133,13 +133,16 @@ impl QueueStore {
 }
 
 /// The receipt `send` returns: what was enqueued, for the recipient's station, and the resulting
-/// `hasMail` state. Serialized by the CLI (`--json`).
+/// `hasMail` state. `duplicate` is `true` when the event's effect id was ALREADY journaled (a
+/// re-delivery — acknowledged but NOT re-enacted, #35 idempotency), `false` for a fresh enqueue.
+/// Serialized by the CLI (`--json`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Enqueued {
     pub role: String,
     pub effect_id: String,
     pub queued: usize,
     pub has_mail: bool,
+    pub duplicate: bool,
 }
 
 /// The per-station queue file: `<state-dir>/queues/<role>.json`.
@@ -248,6 +251,7 @@ pub fn send_to(state_dir: &Path, role: &str, sender: &str, payload: &str) -> Res
         effect_id,
         queued: store.len(),
         has_mail: true,
+        duplicate: false,
     })
 }
 
@@ -274,6 +278,7 @@ pub fn send_to_with_id(
         effect_id: effect_id.to_string(),
         queued: store.len(),
         has_mail: !store.is_empty(),
+        duplicate: !appended,
     })
 }
 
@@ -431,6 +436,15 @@ mod tests {
         let b = send_to_with_id(&dir, "cof", "remote", "hi", "stable-1").unwrap();
         assert_eq!(b.queued, 0);
         assert!(!b.has_mail);
+        assert!(b.duplicate, "a re-delivery is flagged duplicate");
         assert!(!has_mail(&dir, "cof"));
+    }
+
+    #[test]
+    fn send_to_with_id_duplicate_flag_is_false_on_fresh_enqueue() {
+        let dir = tmpdir("dedup-fresh");
+        let a = send_to_with_id(&dir, "cof", "remote", "hi", "stable-1").unwrap();
+        assert!(!a.duplicate, "a fresh enqueue is not a duplicate");
+        assert_eq!(a.queued, 1);
     }
 }
