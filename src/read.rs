@@ -17,12 +17,13 @@ use crate::scheduler::DRAIN_BOUND;
 use crate::send::{clear_has_mail, load_queue, save_queue};
 
 /// One drained event, rendered for the recipient's turn: the sender and the message body. The
-/// envelope's `effect_id`/`kind`/`class` are queue/journal internals — the turn needs only who
-/// sent it and what they said.
+/// `effect_id` is carried through the turn — the STABLE dedup axis (#35): for a cross-host handoff
+/// it is the delivery envelope's id, for a local send the per-station sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReadEvent {
     pub from: String,
     pub text: String,
+    pub effect_id: String,
 }
 
 /// The read/drain result: the events drained this turn (causal order) plus what remains queued.
@@ -70,6 +71,7 @@ pub fn read(state_dir: &Path, role: &str, all: bool) -> Result<ReadResult> {
         .map(|e| ReadEvent {
             from: e.source_id,
             text: e.payload,
+            effect_id: e.effect_id,
         })
         .collect();
 

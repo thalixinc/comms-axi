@@ -57,10 +57,25 @@ impl QueueStore {
     pub fn enqueue(&mut self, role: &str, sender: &str, payload: &str) -> String {
         let effect_id = format!("{role}-{}", self.next_seq);
         self.next_seq += 1;
-        if self.journal.prepare(&effect_id) {
-            self.stream.append(sender, &effect_id, SEND_KIND, payload);
-        }
+        self.enqueue_with_id(sender, &effect_id, payload);
         effect_id
+    }
+
+    /// Enqueue under a CALLER-SUPPLIED effect id — the STABLE cross-host id from the delivery
+    /// envelope (epic #31) — instead of the local per-station sequence. Reuses the journal's
+    /// `prepare` dedup: a re-delivery of an already-journaled id is acknowledged but NOT
+    /// re-appended (the #35 dedup axis, kept intact here so #35 is additive). `next_seq` is
+    /// untouched — stable ids live in a distinct namespace from `{role}-{seq}`.
+    ///
+    /// Returns `true` when this call APPENDED a new envelope (a fresh `prepare`), `false` when the
+    /// id was already journaled (a re-delivery — acknowledged, not re-enacted).
+    pub fn enqueue_with_id(&mut self, sender: &str, effect_id: &str, payload: &str) -> bool {
+        if self.journal.prepare(effect_id) {
+            self.stream.append(sender, effect_id, SEND_KIND, payload);
+            true
+        } else {
+            false
+        }
     }
 
     /// True when the queue has no pending events.
@@ -236,6 +251,32 @@ pub fn send_to(state_dir: &Path, role: &str, sender: &str, payload: &str) -> Res
     })
 }
 
+/// The inbound-listener publish (#33): like [`send_to`], but enqueues under a CALLER-SUPPLIED
+/// STABLE effect id (the delivery envelope's id) rather than the local sequence. Reuses the
+/// journal dedup — a re-delivery of the same id is acknowledged, not re-enacted (#35). The
+/// `hasMail` marker is set ONLY when a real event was appended; a deduped re-delivery must not
+/// leave a marker over an empty queue (that would drive a spurious empty turn on the next tick).
+pub fn send_to_with_id(
+    state_dir: &Path,
+    role: &str,
+    sender: &str,
+    payload: &str,
+    effect_id: &str,
+) -> Result<Enqueued> {
+    let mut store = load_queue(state_dir, role)?;
+    let appended = store.enqueue_with_id(sender, effect_id, payload);
+    save_queue(state_dir, role, &store)?;
+    if appended {
+        set_has_mail(state_dir, role)?;
+    }
+    Ok(Enqueued {
+        role: role.to_string(),
+        effect_id: effect_id.to_string(),
+        queued: store.len(),
+        has_mail: !store.is_empty(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +410,27 @@ mod tests {
             2
         );
         assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn send_to_with_id_does_not_set_marker_on_dedup() {
+        // A re-delivery of an already-drained id appends NOTHING; it must not re-set the hasMail
+        // marker over an empty queue (that would drive a spurious empty turn on the next idle
+        // tick).
+        let dir = tmpdir("dedup-marker");
+        let a = send_to_with_id(&dir, "cof", "remote", "hi", "stable-1").unwrap();
+        assert_eq!(a.queued, 1);
+        assert!(a.has_mail);
+        assert!(has_mail(&dir, "cof"));
+
+        // Drain it (S2 read), which admits the event and clears the marker.
+        crate::read::read(&dir, "cof", true).unwrap();
+        assert!(!has_mail(&dir, "cof"));
+
+        // Re-delivery of the SAME id: deduped — nothing appended, NO marker, has_mail=false.
+        let b = send_to_with_id(&dir, "cof", "remote", "hi", "stable-1").unwrap();
+        assert_eq!(b.queued, 0);
+        assert!(!b.has_mail);
+        assert!(!has_mail(&dir, "cof"));
     }
 }
