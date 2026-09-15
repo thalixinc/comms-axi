@@ -477,7 +477,9 @@ fn cmd_inject(args: &[String]) -> Result<ExitCode, String> {
     }
 
     let dir = resolve_state_dir(state_dir.as_deref());
-    // The idle-tick injection: pull on idle, never push. `idle` is true on a heartbeat tick.
+    // The injection fires on an idle heartbeat tick, so `idle` is hardcoded `true` here (the
+    // heartbeat only runs when the station is idle). The lib `inject` keeps `idle` a parameter
+    // for a pure, testable non-idle path (a non-idle station must never be interrupted).
     let outcome: InjectOutcome = inject(&dir, role, true).map_err(|e| e.to_string())?;
 
     if json_out {

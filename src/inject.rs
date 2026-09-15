@@ -160,4 +160,31 @@ mod tests {
         let noop = serde_json::to_value(inject(&dir, "cof", true).unwrap()).unwrap();
         assert_eq!(noop["action"], "no-op");
     }
+
+    #[test]
+    fn inject_is_no_op_after_re_delivery_of_drained_event() {
+        // A re-delivery of an already-drained id appends nothing and must NOT re-set hasMail;
+        // the next idle tick is a no-op, never a spurious empty turn.
+        let dir = tmpdir("re-delivery");
+        let stable = stable_effect_id("cof", "done: PR #9");
+        send_to_with_id(&dir, "cof", "remote", "done: PR #9", &stable).unwrap();
+
+        // First tick: turn (drains, clears hasMail).
+        assert!(matches!(
+            inject(&dir, "cof", true).unwrap(),
+            InjectOutcome::Turn { .. }
+        ));
+        assert!(!has_mail(&dir, "cof"));
+
+        // Re-delivery of the SAME id: deduped (queued=0, no marker).
+        let r = send_to_with_id(&dir, "cof", "remote", "done: PR #9", &stable).unwrap();
+        assert_eq!(r.queued, 0);
+        assert!(!r.has_mail);
+
+        // Next idle tick: NO spurious turn.
+        assert!(matches!(
+            inject(&dir, "cof", true).unwrap(),
+            InjectOutcome::NoOp
+        ));
+    }
 }
