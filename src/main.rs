@@ -1,12 +1,13 @@
 //! `comms-axi` — the comm virtualization CLI (lib + bin crate).
 //!
-//! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish) and
-//! `read`/`drain` (S2 pull) are implemented.
+//! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish),
+//! `read`/`drain` (S2 pull) and `deliver` (the epic #31 inbound listener) are implemented.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use comms_axi::event::{send_event, Event, SendOutcome};
+use comms_axi::listener::{accept, Accepted};
 use comms_axi::read::read as read_queue;
 use comms_axi::report::report;
 use comms_axi::resolve::resolve_role;
@@ -25,6 +26,7 @@ USAGE:
     comms-axi read <role> [--all] [--state-dir <path>] [--json]
     comms-axi drain <role> [--state-dir <path>] [--json]
     comms-axi wake <role> [--state-dir <path>] [--json]
+    comms-axi deliver <envelope-json> [--state-dir <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
@@ -47,6 +49,10 @@ alias for read --all. Both clear hasMail when the queue empties and render the d
 one injectable turn.
 wake is the hasMail-gated idle tick: file-stat only — re-wake if the station has pending mail,
 else a silent no-op (zero tokens). Non-idle never wakes.
+
+deliver is the inbound LISTENER (epic #31): accept a cross-host handoff (the version-stamped
+envelope #32's sender injects) and enqueue it for the target cof — station queue + hasMail. It
+never injects eagerly (the station pulls on idle); a PROTOCOL_VERSION mismatch is rejected loudly.
 ";
 
 fn main() -> ExitCode {
@@ -74,6 +80,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         "read" => cmd_read(&args[1..]),
         "drain" => cmd_drain(&args[1..]),
         "wake" => cmd_wake(&args[1..]),
+        "deliver" => cmd_deliver(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -396,6 +403,46 @@ fn cmd_wake(args: &[String]) -> Result<ExitCode, String> {
         );
     } else {
         println!("wake -> {}: {}", role, action.as_str());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_deliver(args: &[String]) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("deliver requires <envelope-json>; try `comms-axi --help`".to_string());
+    }
+    let envelope_json = &args[0];
+
+    let mut state_dir: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--state-dir" => {
+                i += 1;
+                state_dir = Some(args.get(i).cloned().ok_or("--state-dir needs a value")?);
+            }
+            "--json" => json_out = true,
+            other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
+        }
+        i += 1;
+    }
+
+    let dir = resolve_state_dir(state_dir.as_deref());
+    // Inbound listener: accept the envelope, enforce the handshake, enqueue for the target cof.
+    // Pull, never push — the station reads on idle.
+    let accepted: Accepted = accept(envelope_json, &dir).map_err(|e| e.to_string())?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&accepted).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "deliver -> {}: queued={} effect_id={} has_mail={} (accepted; station pulls on idle)",
+            accepted.role, accepted.queued, accepted.effect_id, accepted.has_mail
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
