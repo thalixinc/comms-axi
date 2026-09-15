@@ -1,12 +1,14 @@
 //! `comms-axi` — the comm virtualization CLI (lib + bin crate).
 //!
 //! `resolve`/`emit`/`report` (the canary plane) plus `send` (S1 deferred publish),
-//! `read`/`drain` (S2 pull) and `deliver` (the epic #31 inbound listener) are implemented.
+//! `read`/`drain` (S2 pull), `deliver` (the #31 inbound listener) and `inject` (#34 session
+//! injection) are implemented.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use comms_axi::event::{send_event, Event, SendOutcome};
+use comms_axi::inject::{inject, InjectOutcome};
 use comms_axi::listener::{accept, Accepted};
 use comms_axi::read::read as read_queue;
 use comms_axi::report::report;
@@ -27,6 +29,7 @@ USAGE:
     comms-axi drain <role> [--state-dir <path>] [--json]
     comms-axi wake <role> [--state-dir <path>] [--json]
     comms-axi deliver <envelope-json> [--state-dir <path>] [--json]
+    comms-axi inject <role> [--state-dir <path>] [--json]
 
 FLAGS:
     --run <id>       run id (default: \"default\")
@@ -53,6 +56,10 @@ else a silent no-op (zero tokens). Non-idle never wakes.
 deliver is the inbound LISTENER (epic #31): accept a cross-host handoff (the version-stamped
 envelope #32's sender injects) and enqueue it for the target cof — station queue + hasMail. It
 never injects eagerly (the station pulls on idle); a PROTOCOL_VERSION mismatch is rejected loudly.
+
+inject is SESSION INJECTION (pull, never push): on an idle tick, stat hasMail; if the station has
+pending mail, drain the queue exactly once and render it as one turn (else a silent no-op). A
+non-idle station is never touched — no mid-turn interrupt.
 ";
 
 fn main() -> ExitCode {
@@ -81,6 +88,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         "drain" => cmd_drain(&args[1..]),
         "wake" => cmd_wake(&args[1..]),
         "deliver" => cmd_deliver(&args[1..]),
+        "inject" => cmd_inject(&args[1..]),
         other => Err(format!("unknown verb {other:?}; try `comms-axi --help`")),
     }
 }
@@ -443,6 +451,61 @@ fn cmd_deliver(args: &[String]) -> Result<ExitCode, String> {
             "deliver -> {}: queued={} effect_id={} has_mail={} (accepted; station pulls on idle)",
             accepted.role, accepted.queued, accepted.effect_id, accepted.has_mail
         );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_inject(args: &[String]) -> Result<ExitCode, String> {
+    if args.is_empty() {
+        return Err("inject requires <role>; try `comms-axi --help`".to_string());
+    }
+    let role = &args[0];
+
+    let mut state_dir: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--state-dir" => {
+                i += 1;
+                state_dir = Some(args.get(i).cloned().ok_or("--state-dir needs a value")?);
+            }
+            "--json" => json_out = true,
+            other => return Err(format!("unknown flag {other:?}; try `comms-axi --help`")),
+        }
+        i += 1;
+    }
+
+    let dir = resolve_state_dir(state_dir.as_deref());
+    // The idle-tick injection: pull on idle, never push. `idle` is true on a heartbeat tick.
+    let outcome: InjectOutcome = inject(&dir, role, true).map_err(|e| e.to_string())?;
+
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?
+        );
+    } else {
+        match outcome {
+            InjectOutcome::Turn {
+                role,
+                events,
+                remaining,
+                has_mail,
+            } => {
+                println!(
+                    "inject -> {}: {} event(s), remaining={}, has_mail={}",
+                    role,
+                    events.len(),
+                    remaining,
+                    has_mail
+                );
+                for e in &events {
+                    println!("  - {}: {}", e.from, e.text);
+                }
+            }
+            InjectOutcome::NoOp => println!("inject -> {}: no-op", role),
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

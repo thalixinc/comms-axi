@@ -14,10 +14,10 @@
 //!    a different version is rejected LOUDLY before anything is enqueued — never a half-delivery.
 //!    This is the receiver half of [`crate::delivery::handshake`] (#32's sender-side check was
 //!    tautological until this listener actually validates the wire value).
-//! 4. **NO teardown, preserve in-flight** — the envelope carries a STABLE effect id; this slice
-//!    carries it through the receipt for #35's journal dedup (a mid-swap re-send is idempotent).
-//!    Dedup itself is #35; here the listener only enqueues (via S1 `send_to`, which journals
-//!    `Prepared`).
+//! 4. **NO teardown, preserve in-flight** — the envelope carries a STABLE effect id; the listener
+//!    enqueues UNDER that id (not the local per-station sequence), so the journal's `prepare` dedup
+//!    is already keyed on it — a mid-swap re-send of the same id is acknowledged, not re-enacted.
+//!    Dedup is #35; here the listener establishes the STABLE axis (so #35 is additive).
 //!
 //! **Sender attribution (honest gap).** The #32 envelope is `{version, effect_id, to, payload}` —
 //!    it carries NO `from`/sender identity. The listener therefore records
@@ -30,7 +30,7 @@ use serde::Serialize;
 
 use crate::delivery::{handshake, DeliveryError, Envelope, PROTOCOL_VERSION};
 use crate::error::{Error, Result};
-use crate::send::send_to;
+use crate::send::send_to_with_id;
 
 /// The stream `source_id` recorded for a cross-host delivery until the envelope carries an
 /// explicit `from` (a later slice of epic #31). The #32 envelope has no sender identity, so the
@@ -78,13 +78,19 @@ pub fn accept(envelope_json: &str, state_dir: &Path) -> Result<Accepted> {
         ),
     })?;
 
-    // Enqueue for the target cof (S1 `send_to`: writes the queue then sets the hasMail marker).
-    // Pull, never push — the recipient reads on idle.
-    let enqueued = send_to(state_dir, &envelope.to, REMOTE_SENDER, &envelope.payload)?;
+    // Enqueue for the target cof under the envelope's STABLE effect id (the #35 dedup axis, kept
+    // intact here). Pull, never push — the recipient reads on idle.
+    let enqueued = send_to_with_id(
+        state_dir,
+        &envelope.to,
+        REMOTE_SENDER,
+        &envelope.payload,
+        &envelope.effect_id,
+    )?;
 
     Ok(Accepted {
         role: envelope.to,
-        effect_id: envelope.effect_id,
+        effect_id: enqueued.effect_id,
         queued: enqueued.queued,
         has_mail: enqueued.has_mail,
     })

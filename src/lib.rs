@@ -11,6 +11,7 @@ pub mod error;
 pub mod event;
 pub mod fleet;
 pub mod inbox;
+pub mod inject;
 pub mod journal;
 pub mod listener;
 pub mod read;
